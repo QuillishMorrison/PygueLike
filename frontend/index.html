@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PygueLike</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@400;500;700&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+    <div class="shell">
+        <header class="hero">
+            <div>
+                <p class="eyebrow">Turn-based Python deckbuilder</p>
+                <h1>PygueLike</h1>
+                <p class="subtitle">Play code constructs as cards, survive the bug swarm, and compile your run.</p>
+            </div>
+            <div class="hero-actions">
+                <button id="start-game-btn" class="primary">Start New Run</button>
+                <button id="end-turn-btn">End Turn</button>
+            </div>
+        </header>
+
+        <section class="hud">
+            <div class="resource">
+                <span>CPU</span>
+                <strong id="cpu-value">0 / 0</strong>
+            </div>
+            <div class="resource">
+                <span>RAM</span>
+                <strong id="ram-value">0 / 0</strong>
+            </div>
+            <div class="resource">
+                <span>Errors</span>
+                <strong id="errors-value">0 / 0</strong>
+            </div>
+            <div class="resource">
+                <span>Shield</span>
+                <strong id="shield-value">0</strong>
+            </div>
+        </section>
+
+        <section class="status-grid">
+            <article class="panel">
+                <div class="panel-heading">
+                    <h2>Run State</h2>
+                    <span id="run-meta">No session yet</span>
+                </div>
+                <div id="level-meta" class="meta-copy"></div>
+                <div id="passives" class="pill-row"></div>
+            </article>
+
+            <article class="panel">
+                <div class="panel-heading">
+                    <h2>Battle Log</h2>
+                    <span id="connection-status">offline</span>
+                </div>
+                <div id="battle-log" class="log"></div>
+            </article>
+        </section>
+
+        <section class="battlefield">
+            <article class="panel enemies-panel">
+                <div class="panel-heading">
+                    <h2>Enemies</h2>
+                    <span>Click to target</span>
+                </div>
+                <div id="enemies" class="enemies"></div>
+            </article>
+
+            <article class="panel hand-panel">
+                <div class="panel-heading">
+                    <h2>Hand</h2>
+                    <span id="pile-meta">Draw 0 / Discard 0 / Exhaust 0</span>
+                </div>
+                <div id="hand" class="hand"></div>
+            </article>
+        </section>
+
+        <section class="panel reward-panel">
+            <div class="panel-heading">
+                <h2>Post-Battle Progression</h2>
+                <span>Card draft, remove, upgrade, passive</span>
+            </div>
+            <div id="reward-section" class="reward-grid"></div>
+            <div class="deck-tools">
+                <div>
+                    <h3>Deck</h3>
+                    <p class="meta-copy">Remove or upgrade a deck card during reward phase.</p>
+                </div>
+                <div id="deck-cards" class="deck-list"></div>
+            </div>
+            <div id="passive-choices" class="pill-row"></div>
+        </section>
+    </div>
+
+    <script src="./app.js"></script>
+</body>
+</html>
