@@ -1,4 +1,8 @@
-const API_BASE = "http://localhost:8000";
+const hostname = window.location.hostname || "localhost";
+const protocol = window.location.protocol === "https:" ? "https:" : "http:";
+const wsProtocol = protocol === "https:" ? "wss:" : "ws:";
+const API_BASE = `${protocol}//${hostname}:8000`;
+const WS_BASE = `${wsProtocol}//${hostname}:8000`;
 
 const state = {
     sessionId: null,
@@ -110,7 +114,7 @@ function connectSocket() {
     if (state.socket) {
         state.socket.close();
     }
-    const socket = new WebSocket(`ws://localhost:8000/game/ws?session_id=${state.sessionId}`);
+    const socket = new WebSocket(`${WS_BASE}/game/ws?session_id=${state.sessionId}`);
     state.socket = socket;
     elements.connectionStatus.textContent = "connecting";
     socket.addEventListener("open", () => {
