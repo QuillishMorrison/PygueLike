@@ -51,8 +51,8 @@ class GameEngine:
 
         session = GameSessionModel(seed=seed, phase=SessionPhase.BATTLE.value, status="active", log=[])
         player = PlayerStateModel(
-            max_cpu=3,
-            current_cpu=3,
+            max_cpu=4,
+            current_cpu=4,
             max_ram=3,
             current_ram=3,
             max_errors=30,
@@ -73,9 +73,19 @@ class GameEngine:
                 "first_card_tax_applied": False,
                 "first_data_ram_tax_applied": False,
                 "last_card_id": None,
+                "block_next_error": 0,
+                "cards_played_this_turn": 0,
+                "synergy_chain": 0,
             },
             passives=[],
-            reward_state={"card_choice_used": False, "remove_used": False, "upgrade_used": False, "reward_options": []},
+            reward_state={
+                "card_choice_used": False,
+                "remove_used": False,
+                "upgrade_used": False,
+                "passive_choice_used": False,
+                "reward_options": [],
+                "passive_options": [],
+            },
         )
         if modifier["effect"] == "passive_cache":
             player.passives.append(PASSIVE_LIBRARY["caching"])
@@ -108,7 +118,8 @@ class GameEngine:
                 )
             )
 
-        for index, enemy_id in enumerate(rng.sample(level_blueprint.enemy_pool, k=min(3, len(level_blueprint.enemy_pool)))):
+        enemy_count = 2 if level_blueprint.difficulty_scale <= 1.0 else 3
+        for index, enemy_id in enumerate(rng.sample(level_blueprint.enemy_pool, k=min(enemy_count, len(level_blueprint.enemy_pool)))):
             blueprint = ENEMY_BLUEPRINTS[enemy_id]
             hp = int(blueprint.max_hp * level_blueprint.difficulty_scale)
             self.db.add(
@@ -119,7 +130,7 @@ class GameEngine:
                     max_hp=hp,
                     current_hp=hp,
                     position=index,
-                    status_effects={"weak": 0},
+                    status_effects={"weak": 0, "marked": 0, "burn": 0},
                     intent={},
                 )
             )
@@ -159,8 +170,9 @@ class GameEngine:
 
         player.current_cpu -= cpu_cost
         player.current_ram -= ram_cost
+        player.status_effects["cards_played_this_turn"] = player.status_effects.get("cards_played_this_turn", 0) + 1
         repeat_count = player.status_effects.get("repeat_next", 0)
-        bonus_power = player.status_effects.get("bonus_next", 0)
+        bonus_power = player.status_effects.get("bonus_next", 0) + self._combo_bonus(session, definition.card_id)
         async_duplicate = player.status_effects.get("duplicate_next_async", 0)
         player.status_effects["repeat_next"] = 0
         player.status_effects["bonus_next"] = 0
@@ -189,6 +201,10 @@ class GameEngine:
             )
             player.status_effects["queued_actions"] = queued_actions
             self._log(session, f"{definition.name} поставлена в async-очередь.")
+
+        if player.status_effects["cards_played_this_turn"] % 3 == 0:
+            player.current_cpu += 1
+            self._log(session, "Three-card chain restored 1 CPU.")
 
         card_state.zone = CardZone.EXHAUST.value if definition.exhausts else CardZone.DISCARD.value
         player.status_effects["last_card_id"] = card_state.card_id
@@ -270,14 +286,20 @@ class GameEngine:
 
     def choose_passive(self, session_id: str, passive_id: str) -> GameSessionModel:
         session = self.load_full_session(session_id)
+        reward_state = session.player_state.reward_state
         if session.phase != SessionPhase.REWARD.value:
             raise ValueError("Пассивки можно выбирать только после боя.")
+        if reward_state.get("passive_choice_used"):
+            raise ValueError("Passive reward already chosen.")
+        if passive_id not in reward_state.get("passive_options", []):
+            raise ValueError("Passive not offered.")
         passive = PASSIVE_LIBRARY.get(passive_id)
         if not passive:
             raise ValueError("Неизвестная пассивка.")
         if any(existing["id"] == passive_id for existing in session.player_state.passives):
             raise ValueError("Эта пассивка уже выбрана.")
         session.player_state.passives.append(passive)
+        reward_state["passive_choice_used"] = True
         self._log(session, f"Установлена пассивка {passive['name']}.")
         self.db.commit()
         return session
@@ -331,6 +353,8 @@ class GameEngine:
                 reward_options=[self._virtual_card_view(card_id) for card_id in reward_state.get("reward_options", [])],
                 can_remove_card=not reward_state.get("remove_used", False),
                 can_upgrade_card=not reward_state.get("upgrade_used", False),
+                can_choose_passive=not reward_state.get("passive_choice_used", False),
+                passive_options=[PASSIVE_LIBRARY[passive_id] for passive_id in reward_state.get("passive_options", []) if passive_id in PASSIVE_LIBRARY],
             ),
         )
 
@@ -338,6 +362,8 @@ class GameEngine:
         player = session.player_state
         player.status_effects["first_card_tax_applied"] = False
         player.status_effects["first_data_ram_tax_applied"] = False
+        player.status_effects["cards_played_this_turn"] = 0
+        player.status_effects["synergy_chain"] = 0
         player.current_cpu = max(0, player.max_cpu + player.status_effects.pop("turn_cpu_bonus", 0) - player.status_effects.pop("next_turn_cpu_penalty", 0))
         player.current_ram = max(0, player.max_ram + player.status_effects.pop("turn_ram_bonus", 0) - player.status_effects.pop("next_turn_ram_penalty", 0))
         if any(passive["id"] == "jit_compiler" for passive in player.passives):
@@ -406,43 +432,54 @@ class GameEngine:
 
         match card_id:
             case "print_debug":
-                self._deal_damage(session, target, 4 + bonus_power)
+                self._deal_damage(session, target, 5 + bonus_power)
             case "assign_var":
                 player.current_cpu += 1 + (1 if card_state.upgraded else 0)
             case "append_list":
-                self._deal_damage(session, target, 5 + bonus_power)
+                self._deal_damage(session, target, 4 + bonus_power + (2 if target and target.status_effects.get("marked", 0) else 0))
                 self._draw_cards(session, 1)
             case "if_statement":
-                self._deal_damage(session, target, (8 if target and target.status_effects.get("weak", 0) else 4) + bonus_power)
+                self._deal_damage(session, target, (9 if target and (target.status_effects.get("weak", 0) or target.status_effects.get("marked", 0)) else 4) + bonus_power)
             case "for_loop":
                 player.status_effects["repeat_next"] = player.status_effects.get("repeat_next", 0) + 1
             case "while_loop":
-                player.status_effects["repeat_next"] = player.status_effects.get("repeat_next", 0) + 2
+                player.status_effects["repeat_next"] = player.status_effects.get("repeat_next", 0) + 1
+                player.status_effects["bonus_next"] = player.status_effects.get("bonus_next", 0) + 2
                 self._apply_error_damage(session, 1)
             case "lambda_func":
-                player.status_effects["bonus_next"] = player.status_effects.get("bonus_next", 0) + 3
+                player.status_effects["bonus_next"] = player.status_effects.get("bonus_next", 0) + 4
+                if card_state.upgraded:
+                    player.status_effects["cpu_discount_next"] = player.status_effects.get("cpu_discount_next", 0) + 1
             case "try_except":
                 player.status_effects["block_next_error"] = player.status_effects.get("block_next_error", 0) + 1
+                player.status_effects["error_shield"] = player.status_effects.get("error_shield", 0) + 1
             case "finally_block":
                 self._heal_player(session, 3)
                 player.status_effects["turn_ram_bonus"] = player.status_effects.get("turn_ram_bonus", 0) + 1
             case "list_comprehension":
                 for enemy in self._living_enemies(session):
-                    self._deal_damage(session, enemy, 4 + bonus_power)
+                    self._apply_status(enemy, "burn", 1)
+                    self._deal_damage(session, enemy, 3 + bonus_power)
             case "dict_lookup":
                 self._deal_damage(session, target, 4 + bonus_power)
                 if target:
-                    target.status_effects["weak"] = target.status_effects.get("weak", 0) + 1
+                    self._apply_status(target, "weak", 1)
+                    self._apply_status(target, "marked", 1 + (1 if card_state.upgraded else 0))
             case "set_default":
-                player.status_effects["error_shield"] = player.status_effects.get("error_shield", 0) + 2 + (1 if card_state.upgraded else 0)
+                player.status_effects["error_shield"] = player.status_effects.get("error_shield", 0) + 3
+                if card_state.upgraded:
+                    player.current_cpu += 1
                 self._draw_cards(session, 1)
             case "import_module":
                 player.current_cpu += 1
                 player.current_ram += 1
+                if card_state.upgraded:
+                    self._draw_cards(session, 1)
             case "class_def":
                 player.status_effects["error_shield"] = player.status_effects.get("error_shield", 0) + 2
                 for enemy in self._living_enemies(session):
-                    self._deal_damage(session, enemy, 3 + bonus_power)
+                    self._apply_status(enemy, "marked", 1)
+                    self._deal_damage(session, enemy, 4 + bonus_power)
             case "decorator":
                 player.status_effects["cpu_discount_next"] = player.status_effects.get("cpu_discount_next", 0) + 1
                 player.status_effects["bonus_next"] = player.status_effects.get("bonus_next", 0) + 2
@@ -450,31 +487,41 @@ class GameEngine:
                 self._draw_cards(session, 2 + (1 if card_state.upgraded else 0))
             case "yield_value":
                 player.status_effects["turn_cpu_bonus"] = player.status_effects.get("turn_cpu_bonus", 0) + 2
+                if card_state.upgraded:
+                    player.status_effects["turn_ram_bonus"] = player.status_effects.get("turn_ram_bonus", 0) + 1
             case "map_call":
                 self._deal_damage(session, target, 6 + bonus_power)
                 splash = self._random_other_enemy(session, target.id if target else None)
                 if splash:
-                    self._deal_damage(session, splash, 2 + bonus_power)
+                    self._deal_damage(session, splash, 4 + bonus_power)
             case "filter_call":
-                damage = 10 if target and target.status_effects.get("weak", 0) else 5
+                damage = 6 + (6 if target and (target.status_effects.get("weak", 0) or target.status_effects.get("marked", 0)) else 0)
                 self._deal_damage(session, target, damage + bonus_power)
             case "async_def":
                 player.status_effects["duplicate_next_async"] = player.status_effects.get("duplicate_next_async", 0) + 1
+                player.status_effects["cpu_discount_next"] = player.status_effects.get("cpu_discount_next", 0) + 1
             case "await_call":
-                self._resolve_queued_actions(session, immediate=True)
+                resolved_now = self._resolve_queued_actions(session, immediate=True)
+                if resolved_now:
+                    player.current_cpu += 1
                 self._draw_cards(session, 1)
             case "memory_view":
                 player.current_ram += 2 + (1 if card_state.upgraded else 0)
+                player.status_effects["error_shield"] = player.status_effects.get("error_shield", 0) + 1
             case "with_context":
                 player.status_effects["ram_discount_next"] = player.status_effects.get("ram_discount_next", 0) + 1
+                if card_state.upgraded:
+                    player.status_effects["block_next_error"] = player.status_effects.get("block_next_error", 0) + 1
             case "recursion":
-                self._deal_damage(session, target, 12 + bonus_power + (2 if card_state.upgraded else 0))
-                self._apply_error_damage(session, 2)
+                self._deal_damage(session, target, 10 + bonus_power + (2 if card_state.upgraded else 0))
+                if target:
+                    self._apply_status(target, "marked", 1)
+                self._apply_error_damage(session, 1)
             case "raise_exception":
-                self._apply_error_damage(session, 2)
-                self._deal_damage(session, target, 14 + bonus_power)
+                self._apply_error_damage(session, 1)
+                self._deal_damage(session, target, 14 + bonus_power + (2 if card_state.upgraded else 0))
             case "assert_stmt":
-                self._deal_damage(session, target, 7 + bonus_power)
+                self._deal_damage(session, target, 7 + bonus_power + (4 if target and target.status_effects.get("marked", 0) else 0))
                 if target and target.current_hp > 0:
                     player.status_effects["error_shield"] = player.status_effects.get("error_shield", 0) + 1
             case "zip_iter":
@@ -482,9 +529,9 @@ class GameEngine:
                 if target and target not in targets:
                     targets = [target] + targets[:1]
                 for enemy in targets:
-                    self._deal_damage(session, enemy, 4 + bonus_power)
+                    self._deal_damage(session, enemy, 5 + bonus_power)
             case "enumerate_iter":
-                self._deal_damage(session, target, 3 + bonus_power)
+                self._deal_damage(session, target, 4 + bonus_power)
                 self._draw_cards(session, 2 if card_state.upgraded else 1)
             case _:
                 raise ValueError(f"Необработанный эффект карты: {card_id}")
@@ -492,6 +539,7 @@ class GameEngine:
 
     def _enemy_turn(self, session: GameSessionModel) -> None:
         session.player_state.status_effects["type_tax"] = {}
+        self._tick_enemy_statuses(session)
         for enemy in self._living_enemies(session):
             self._apply_enemy_effect(session, enemy)
             enemy.status_effects["weak"] = max(0, enemy.status_effects.get("weak", 0) - 1)
@@ -502,34 +550,55 @@ class GameEngine:
 
     def _apply_enemy_effect(self, session: GameSessionModel, enemy: EnemyStateModel) -> None:
         player = session.player_state
+        if enemy.current_hp <= 0:
+            return
+        turn_even = session.turn_number % 2 == 0
         if player.status_effects.get("block_next_error", 0) > 0:
             player.status_effects["block_next_error"] -= 1
             self._log(session, f"{enemy.name} заблокирован через try/except.")
             return
         match enemy.enemy_id:
             case "syntax_error":
-                self._apply_error_damage(session, 4)
-                self._add_type_tax(player, CardType.CONTROL.value, cpu=1)
+                if turn_even:
+                    self._apply_error_damage(session, 2)
+                    self._disable_random_card(session, CardType.CONTROL.value)
+                else:
+                    self._apply_error_damage(session, 5)
+                    self._add_type_tax(player, CardType.CONTROL.value, cpu=1)
             case "type_error":
-                self._apply_error_damage(session, 5)
+                self._apply_error_damage(session, 4)
                 self._disable_random_card(session, CardType.DATA.value)
+                if turn_even:
+                    self._add_type_tax(player, CardType.DATA.value, cpu=1)
             case "memory_error":
                 self._apply_error_damage(session, 3)
                 player.status_effects["next_turn_ram_penalty"] = player.status_effects.get("next_turn_ram_penalty", 0) + 1
+                if turn_even:
+                    player.status_effects["next_turn_cpu_penalty"] = player.status_effects.get("next_turn_cpu_penalty", 0) + 1
             case "timeout_error":
                 self._apply_error_damage(session, 2)
                 player.status_effects["next_turn_cpu_penalty"] = player.status_effects.get("next_turn_cpu_penalty", 0) + 1
+                self._delay_queued_actions(player)
             case "key_error":
                 if player.status_effects.get("error_shield", 0) > 0:
-                    player.status_effects["error_shield"] -= 1
+                    burn = min(2, player.status_effects.get("error_shield", 0))
+                    player.status_effects["error_shield"] -= burn
+                    self._log(session, f"KeyError burned {burn} shield.")
                     self._log(session, "KeyError сжег 1 щит.")
                 else:
                     self._apply_error_damage(session, 4)
             case "recursion_error":
                 self._apply_error_damage(session, 2 + session.turn_number)
+                enemy.current_hp = min(enemy.max_hp, enemy.current_hp + 2)
+                self._log(session, f"{enemy.name} regains 2 HP.")
             case "import_error":
                 self._apply_error_damage(session, 3)
                 self._add_type_tax(player, CardType.ASYNC.value, cpu=1)
+                queued = list(player.status_effects.get("queued_actions", []))
+                if queued:
+                    queued.pop(0)
+                    player.status_effects["queued_actions"] = queued
+                    self._log(session, "ImportError dropped one queued action.")
             case _:
                 self._apply_error_damage(session, 3)
 
@@ -565,22 +634,27 @@ class GameEngine:
                 "card_choice_used": False,
                 "remove_used": False,
                 "upgrade_used": False,
-                "reward_options": reward_rng.sample(list(CARD_LIBRARY.keys()), k=3),
+                "passive_choice_used": False,
+                "reward_options": self._build_reward_options(session, reward_rng),
+                "passive_options": self._build_passive_options(session, reward_rng),
             }
             self._log(session, "Бой завершен. Открыта фаза наград.")
 
-    def _resolve_queued_actions(self, session: GameSessionModel, immediate: bool = False) -> None:
+    def _resolve_queued_actions(self, session: GameSessionModel, immediate: bool = False) -> int:
         queued = session.player_state.status_effects.get("queued_actions", [])
         remaining = []
+        resolved = 0
         for action in queued:
             if immediate or action["turn"] <= session.turn_number:
                 target = self._select_target(session, action.get("target_enemy_id"), allow_fallback=True)
                 if target:
                     virtual_card = CardStateModel(card_id=action["card_id"], zone=CardZone.HAND.value, position=0, upgraded=False, temporary=True)
                     self._resolve_card_effect(session, virtual_card, action["card_id"], target, action.get("power", 0))
+                    resolved += 1
             else:
                 remaining.append(action)
         session.player_state.status_effects["queued_actions"] = remaining
+        return resolved
 
     def _turn_draw_bonus(self, session: GameSessionModel) -> int:
         bonus = 0
@@ -611,6 +685,9 @@ class GameEngine:
         if not enemy or enemy.current_hp <= 0:
             return
         effective_damage = amount + (1 if enemy.status_effects.get("weak", 0) and amount > 0 else 0)
+        if enemy.status_effects.get("marked", 0) and amount > 0:
+            effective_damage += 3
+            enemy.status_effects["marked"] = max(0, enemy.status_effects.get("marked", 0) - 1)
         enemy.current_hp = max(0, enemy.current_hp - effective_damage)
         self._log(session, f"{enemy.name} получает {effective_damage} урона.")
 
@@ -653,6 +730,62 @@ class GameEngine:
         taxes[card_type]["cpu"] += cpu
         taxes[card_type]["ram"] += ram
         player.status_effects["type_tax"] = taxes
+
+    def _apply_status(self, enemy: EnemyStateModel, status_name: str, amount: int) -> None:
+        enemy.status_effects[status_name] = enemy.status_effects.get(status_name, 0) + amount
+
+    def _tick_enemy_statuses(self, session: GameSessionModel) -> None:
+        for enemy in self._living_enemies(session):
+            burn = enemy.status_effects.get("burn", 0)
+            if burn > 0:
+                enemy.current_hp = max(0, enemy.current_hp - burn)
+                enemy.status_effects["burn"] = max(0, burn - 1)
+                self._log(session, f"{enemy.name} burns for {burn}.")
+
+    def _delay_queued_actions(self, player: PlayerStateModel) -> None:
+        queued = list(player.status_effects.get("queued_actions", []))
+        for action in queued:
+            action["turn"] += 1
+        player.status_effects["queued_actions"] = queued
+
+    def _combo_bonus(self, session: GameSessionModel, card_id: str) -> int:
+        player = session.player_state
+        last_card_id = player.status_effects.get("last_card_id")
+        if not last_card_id:
+            player.status_effects["synergy_chain"] = 0
+            return 0
+        current_tags = set(CARD_LIBRARY[card_id].synergy_tags)
+        previous_tags = set(CARD_LIBRARY[last_card_id].synergy_tags)
+        if current_tags & previous_tags:
+            player.status_effects["synergy_chain"] = player.status_effects.get("synergy_chain", 0) + 1
+            bonus = 2 + min(2, player.status_effects["synergy_chain"])
+            self._log(session, f"Combo online: +{bonus} power.")
+            return bonus
+        player.status_effects["synergy_chain"] = 0
+        return 0
+
+    def _build_reward_options(self, session: GameSessionModel, rng: random.Random) -> list[str]:
+        deck_card_ids = [card.card_id for card in session.cards if card.zone in {CardZone.DECK.value, CardZone.HAND.value, CardZone.DISCARD.value}]
+        tag_weights: dict[str, int] = {}
+        for card_id in deck_card_ids:
+            for tag in CARD_LIBRARY[card_id].synergy_tags:
+                tag_weights[tag] = tag_weights.get(tag, 0) + 1
+        weighted_pool: list[str] = []
+        for card_id, definition in CARD_LIBRARY.items():
+            weight = 1 + sum(tag_weights.get(tag, 0) for tag in definition.synergy_tags)
+            weighted_pool.extend([card_id] * max(1, weight))
+        options: list[str] = []
+        while weighted_pool and len(options) < 3:
+            candidate = rng.choice(weighted_pool)
+            if candidate not in options:
+                options.append(candidate)
+        return options
+
+    def _build_passive_options(self, session: GameSessionModel, rng: random.Random) -> list[str]:
+        owned = {passive["id"] for passive in session.player_state.passives}
+        available = [passive_id for passive_id in PASSIVE_LIBRARY if passive_id not in owned]
+        rng.shuffle(available)
+        return available[:2]
 
     def _caching_bonus(self, player: PlayerStateModel, card_id: str, resolve_index: int) -> int:
         if not any(passive["id"] == "caching" for passive in player.passives):

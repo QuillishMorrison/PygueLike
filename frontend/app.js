@@ -201,12 +201,17 @@ function render() {
 function renderEnemy(enemy) {
     const width = Math.max(0, (enemy.hp / enemy.max_hp) * 100);
     const selectedClass = enemy.instance_id === state.selectedEnemyId ? "selected" : "";
+    const statuses = Object.entries(enemy.statuses || {})
+        .filter(([, value]) => value)
+        .map(([key, value]) => `<span class="tag">${escapeHtml(key)}:${escapeHtml(value)}</span>`)
+        .join("");
     return `
         <button class="enemy-card ${selectedClass}" data-enemy-id="${enemy.instance_id}">
             <h3>${escapeHtml(enemy.name)}</h3>
             <div>${enemy.hp} / ${enemy.max_hp} HP</div>
             <div class="hp-bar"><span style="width: ${width}%"></span></div>
             <div class="intent">${escapeHtml(enemy.intent.label)}: ${escapeHtml(enemy.intent.details)}</div>
+            <div class="tags">${statuses}</div>
         </button>
     `;
 }
@@ -266,8 +271,8 @@ function renderPassives() {
         elements.passiveChoices.innerHTML = "";
         return;
     }
-    elements.passiveChoices.innerHTML = state.passiveChoices.map((passive) => `
-        <button class="pill" data-passive-id="${passive.id}" ${state.game.player.passives.some((owned) => owned.id === passive.id) ? "disabled" : ""}>
+    elements.passiveChoices.innerHTML = state.game.reward_state.passive_options.map((passive) => `
+        <button class="pill" data-passive-id="${passive.id}" ${!state.game.reward_state.can_choose_passive || state.game.player.passives.some((owned) => owned.id === passive.id) ? "disabled" : ""}>
             ${escapeHtml(passive.name)}
         </button>
     `).join("");

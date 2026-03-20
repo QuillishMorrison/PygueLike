@@ -89,6 +89,8 @@ class RewardStateView(BaseModel):
     reward_options: list[CardView] = Field(default_factory=list)
     can_remove_card: bool = False
     can_upgrade_card: bool = False
+    can_choose_passive: bool = False
+    passive_options: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class GameStateResponse(BaseModel):
