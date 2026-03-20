@@ -8,8 +8,8 @@ LEVEL_BLUEPRINTS: dict[str, LevelBlueprint] = {
         level_type="web_app",
         enemy_pool=["syntax_error", "timeout_error", "import_error", "key_error"],
         modifier_pool=[
-            {"name": "Cold Start", "effect": "async_tax", "value": 1, "description": "Async cards cost +1 CPU."},
-            {"name": "Hot Reload", "effect": "draw_bonus", "value": 1, "description": "Draw +1 card on turn 1."},
+            {"name": "Холодный старт", "effect": "async_tax", "value": 1, "description": "Async-карты стоят на 1 CPU больше."},
+            {"name": "Горячая перезагрузка", "effect": "draw_bonus", "value": 1, "description": "В 1-й ход добирается на 1 карту больше."},
         ],
         difficulty_scale=1.0,
     ),
@@ -17,8 +17,8 @@ LEVEL_BLUEPRINTS: dict[str, LevelBlueprint] = {
         level_type="data_pipeline",
         enemy_pool=["memory_error", "type_error", "key_error", "timeout_error"],
         modifier_pool=[
-            {"name": "Large Batch", "effect": "ram_tax", "value": 1, "description": "The first data card each turn costs +1 RAM."},
-            {"name": "Cached Dataset", "effect": "starting_shield", "value": 1, "description": "Start with 1 shield."},
+            {"name": "Большой батч", "effect": "ram_tax", "value": 1, "description": "Первая data-карта каждого хода стоит на 1 RAM больше."},
+            {"name": "Кэшированный датасет", "effect": "starting_shield", "value": 1, "description": "Начните бой с 1 щитом."},
         ],
         difficulty_scale=1.1,
     ),
@@ -26,8 +26,8 @@ LEVEL_BLUEPRINTS: dict[str, LevelBlueprint] = {
         level_type="api_service",
         enemy_pool=["timeout_error", "key_error", "import_error", "syntax_error"],
         modifier_pool=[
-            {"name": "Rate Limit", "effect": "cpu_tax", "value": 1, "description": "The first card each turn costs +1 CPU."},
-            {"name": "Observability", "effect": "reward_draw", "value": 1, "description": "Rewards include one upgraded card."},
+            {"name": "Лимит запросов", "effect": "cpu_tax", "value": 1, "description": "Первая карта каждого хода стоит на 1 CPU больше."},
+            {"name": "Наблюдаемость", "effect": "reward_draw", "value": 1, "description": "Среди наград может попасться улучшенная карта."},
         ],
         difficulty_scale=1.05,
     ),
@@ -35,8 +35,8 @@ LEVEL_BLUEPRINTS: dict[str, LevelBlueprint] = {
         level_type="game_server",
         enemy_pool=["timeout_error", "memory_error", "recursion_error", "type_error"],
         modifier_pool=[
-            {"name": "Tick Pressure", "effect": "enemy_damage", "value": 1, "description": "Enemies hit harder."},
-            {"name": "Warm Cache", "effect": "passive_cache", "value": 1, "description": "Start with Caching."},
+            {"name": "Давление тиков", "effect": "enemy_damage", "value": 1, "description": "Враги бьют сильнее."},
+            {"name": "Теплый кэш", "effect": "passive_cache", "value": 1, "description": "Начните с пассивки Кэширование."},
         ],
         difficulty_scale=1.2,
     ),

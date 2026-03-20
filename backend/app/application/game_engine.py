@@ -22,18 +22,18 @@ from app.infrastructure.models import CardStateModel, EnemyStateModel, GameSessi
 PASSIVE_LIBRARY = {
     "jit_compiler": {
         "id": "jit_compiler",
-        "name": "JIT Compiler",
-        "description": "Reduce CPU cost of your first card each turn by 1.",
+        "name": "JIT-компилятор",
+        "description": "Первая карта каждого хода стоит на 1 CPU меньше.",
     },
     "garbage_collector": {
         "id": "garbage_collector",
-        "name": "Garbage Collector",
-        "description": "Reduce RAM cost of heavy cards by 1.",
+        "name": "Сборщик мусора",
+        "description": "Тяжелые карты стоят на 1 RAM меньше.",
     },
     "caching": {
         "id": "caching",
-        "name": "Caching",
-        "description": "Repeated effects gain +2 power.",
+        "name": "Кэширование",
+        "description": "Повторяющиеся эффекты получают +2 силы.",
     },
 }
 
@@ -89,7 +89,7 @@ class GameEngine:
             difficulty_scale=level_blueprint.difficulty_scale,
             modifiers=[modifier],
             enemy_pool=level_blueprint.enemy_pool,
-            notes=f"Seeded run for {level_type}",
+            notes=f"Сидовый забег для {level_type}",
         )
         session.player_state = player
         session.level_state = level_state
@@ -125,7 +125,7 @@ class GameEngine:
             )
 
         self.db.flush()
-        self._log(session, f"Booted run with seed {seed} in {level_type}.")
+        self._log(session, f"Запущен сид {seed} на уровне {level_type}.")
         self._start_turn(session)
         self.db.commit()
         return session
@@ -133,29 +133,29 @@ class GameEngine:
     def load_full_session(self, session_id: str) -> GameSessionModel:
         session = self.db.query(GameSessionModel).filter(GameSessionModel.id == session_id).first()
         if not session:
-            raise ValueError("Game session not found.")
+            raise ValueError("Игровая сессия не найдена.")
         _ = session.player_state, session.level_state, session.cards, session.enemies
         return session
 
     def play_card(self, session_id: str, card_instance_id: int, target_enemy_id: int | None) -> GameSessionModel:
         session = self.load_full_session(session_id)
         if session.phase != SessionPhase.BATTLE.value:
-            raise ValueError("Cards can only be played during battle.")
+            raise ValueError("Карты можно играть только во время боя.")
 
         player = session.player_state
         card_state = next((card for card in session.cards if card.id == card_instance_id and card.zone == CardZone.HAND.value), None)
         if not card_state:
-            raise ValueError("Card is not in hand.")
+            raise ValueError("Эта карта не находится в руке.")
         if card_state.disabled_until_turn >= session.turn_number:
-            raise ValueError("This card is disabled this turn.")
+            raise ValueError("Эта карта отключена на текущий ход.")
 
         definition = CARD_LIBRARY[card_state.card_id]
         target = self._select_target(session, target_enemy_id) if definition.requires_target else None
         cpu_cost, ram_cost = self._effective_cost(session, card_state)
         if player.current_cpu < cpu_cost:
-            raise ValueError("Not enough CPU.")
+            raise ValueError("Недостаточно CPU.")
         if player.current_ram < ram_cost:
-            raise ValueError("Not enough RAM.")
+            raise ValueError("Недостаточно RAM.")
 
         player.current_cpu -= cpu_cost
         player.current_ram -= ram_cost
@@ -188,7 +188,7 @@ class GameEngine:
                 }
             )
             player.status_effects["queued_actions"] = queued_actions
-            self._log(session, f"{definition.name} was scheduled asynchronously.")
+            self._log(session, f"{definition.name} поставлена в async-очередь.")
 
         card_state.zone = CardZone.EXHAUST.value if definition.exhausts else CardZone.DISCARD.value
         player.status_effects["last_card_id"] = card_state.card_id
@@ -201,7 +201,7 @@ class GameEngine:
     def end_turn(self, session_id: str) -> GameSessionModel:
         session = self.load_full_session(session_id)
         if session.phase != SessionPhase.BATTLE.value:
-            raise ValueError("Battle is not active.")
+            raise ValueError("Бой сейчас не активен.")
 
         self._enemy_turn(session)
         self._check_battle_end(session)
@@ -214,12 +214,12 @@ class GameEngine:
     def choose_reward_card(self, session_id: str, reward_card_id: str) -> GameSessionModel:
         session = self.load_full_session(session_id)
         if session.phase != SessionPhase.REWARD.value:
-            raise ValueError("Rewards are not available.")
+            raise ValueError("Награды сейчас недоступны.")
         reward_state = session.player_state.reward_state
         if reward_state.get("card_choice_used"):
-            raise ValueError("Card reward already chosen.")
+            raise ValueError("Наградная карта уже выбрана.")
         if reward_card_id not in reward_state.get("reward_options", []):
-            raise ValueError("Reward card not offered.")
+            raise ValueError("Эта карта не предлагалась в награду.")
         deck_size = len([card for card in session.cards if card.zone == CardZone.DECK.value])
         self.db.add(
             CardStateModel(
@@ -232,53 +232,53 @@ class GameEngine:
             )
         )
         reward_state["card_choice_used"] = True
-        self._log(session, f"Added {CARD_LIBRARY[reward_card_id].name} to the deck.")
+        self._log(session, f"Карта {CARD_LIBRARY[reward_card_id].name} добавлена в колоду.")
         self.db.commit()
         return session
 
     def remove_deck_card(self, session_id: str, card_instance_id: int) -> GameSessionModel:
         session = self.load_full_session(session_id)
         if session.phase != SessionPhase.REWARD.value:
-            raise ValueError("Card removal is only available after battle.")
+            raise ValueError("Удаление карты доступно только после боя.")
         reward_state = session.player_state.reward_state
         if reward_state.get("remove_used"):
-            raise ValueError("Removal already used.")
+            raise ValueError("Удаление уже использовано.")
         card_state = next((card for card in session.cards if card.id == card_instance_id and card.zone == CardZone.DECK.value), None)
         if not card_state:
-            raise ValueError("Only deck cards can be removed.")
+            raise ValueError("Удалять можно только карты из колоды.")
         self.db.delete(card_state)
         reward_state["remove_used"] = True
-        self._log(session, "Removed a card from the deck.")
+        self._log(session, "Карта удалена из колоды.")
         self.db.commit()
         return session
 
     def upgrade_deck_card(self, session_id: str, card_instance_id: int) -> GameSessionModel:
         session = self.load_full_session(session_id)
         if session.phase != SessionPhase.REWARD.value:
-            raise ValueError("Card upgrades are only available after battle.")
+            raise ValueError("Улучшение карты доступно только после боя.")
         reward_state = session.player_state.reward_state
         if reward_state.get("upgrade_used"):
-            raise ValueError("Upgrade already used.")
+            raise ValueError("Улучшение уже использовано.")
         card_state = next((card for card in session.cards if card.id == card_instance_id and card.zone == CardZone.DECK.value), None)
         if not card_state:
-            raise ValueError("Only deck cards can be upgraded.")
+            raise ValueError("Улучшать можно только карты из колоды.")
         card_state.upgraded = True
         reward_state["upgrade_used"] = True
-        self._log(session, f"Upgraded {CARD_LIBRARY[card_state.card_id].name}.")
+        self._log(session, f"Карта {CARD_LIBRARY[card_state.card_id].name} улучшена.")
         self.db.commit()
         return session
 
     def choose_passive(self, session_id: str, passive_id: str) -> GameSessionModel:
         session = self.load_full_session(session_id)
         if session.phase != SessionPhase.REWARD.value:
-            raise ValueError("Passives can only be chosen after battle.")
+            raise ValueError("Пассивки можно выбирать только после боя.")
         passive = PASSIVE_LIBRARY.get(passive_id)
         if not passive:
-            raise ValueError("Unknown passive.")
+            raise ValueError("Неизвестная пассивка.")
         if any(existing["id"] == passive_id for existing in session.player_state.passives):
-            raise ValueError("Passive already owned.")
+            raise ValueError("Эта пассивка уже выбрана.")
         session.player_state.passives.append(passive)
-        self._log(session, f"Installed passive {passive['name']}.")
+        self._log(session, f"Установлена пассивка {passive['name']}.")
         self.db.commit()
         return session
 
@@ -314,7 +314,7 @@ class GameEngine:
                     name=enemy.name,
                     hp=max(0, enemy.current_hp),
                     max_hp=enemy.max_hp,
-                    intent=EnemyIntentView(label=enemy.intent.get("label", "Idle"), details=enemy.intent.get("details", "")),
+                    intent=EnemyIntentView(label=enemy.intent.get("label", "Ожидание"), details=enemy.intent.get("details", "")),
                     statuses=enemy.status_effects,
                 )
                 for enemy in self._living_enemies(session)
@@ -345,7 +345,7 @@ class GameEngine:
         self._resolve_queued_actions(session)
         self._draw_cards(session, 5 + self._turn_draw_bonus(session))
         self._update_enemy_intents(session)
-        self._log(session, f"Turn {session.turn_number} started.")
+        self._log(session, f"Начался ход {session.turn_number}.")
 
     def _draw_cards(self, session: GameSessionModel, count: int) -> None:
         for _ in range(count):
@@ -487,8 +487,8 @@ class GameEngine:
                 self._deal_damage(session, target, 3 + bonus_power)
                 self._draw_cards(session, 2 if card_state.upgraded else 1)
             case _:
-                raise ValueError(f"Unhandled card effect: {card_id}")
-        self._log(session, f"Played {definition.name}.")
+                raise ValueError(f"Необработанный эффект карты: {card_id}")
+        self._log(session, f"Сыграна карта {definition.name}.")
 
     def _enemy_turn(self, session: GameSessionModel) -> None:
         session.player_state.status_effects["type_tax"] = {}
@@ -498,13 +498,13 @@ class GameEngine:
         for card in self._sorted_cards(session, CardZone.HAND.value):
             card.zone = CardZone.DISCARD.value
         self._normalize_zone_positions(session)
-        self._log(session, "Enemy turn resolved.")
+        self._log(session, "Ход врагов завершен.")
 
     def _apply_enemy_effect(self, session: GameSessionModel, enemy: EnemyStateModel) -> None:
         player = session.player_state
         if player.status_effects.get("block_next_error", 0) > 0:
             player.status_effects["block_next_error"] -= 1
-            self._log(session, f"{enemy.name} was blocked by try/except.")
+            self._log(session, f"{enemy.name} заблокирован через try/except.")
             return
         match enemy.enemy_id:
             case "syntax_error":
@@ -522,7 +522,7 @@ class GameEngine:
             case "key_error":
                 if player.status_effects.get("error_shield", 0) > 0:
                     player.status_effects["error_shield"] -= 1
-                    self._log(session, "KeyError consumed 1 shield.")
+                    self._log(session, "KeyError сжег 1 щит.")
                 else:
                     self._apply_error_damage(session, 4)
             case "recursion_error":
@@ -537,25 +537,25 @@ class GameEngine:
         for enemy in self._living_enemies(session):
             match enemy.enemy_id:
                 case "syntax_error":
-                    enemy.intent = {"label": "Parse Break", "details": "4 damage and control cards cost +1 CPU."}
+                    enemy.intent = {"label": "Сбой парсинга", "details": "4 урона и control-карты стоят на 1 CPU дороже."}
                 case "type_error":
-                    enemy.intent = {"label": "Bad Cast", "details": "5 damage and disables a data card."}
+                    enemy.intent = {"label": "Плохое приведение", "details": "5 урона и отключение одной data-карты."}
                 case "memory_error":
-                    enemy.intent = {"label": "Heap Spike", "details": "3 damage and next turn RAM -1."}
+                    enemy.intent = {"label": "Пик кучи", "details": "3 урона и -1 RAM на следующий ход."}
                 case "timeout_error":
-                    enemy.intent = {"label": "Slow Request", "details": "2 damage and next turn CPU -1."}
+                    enemy.intent = {"label": "Медленный запрос", "details": "2 урона и -1 CPU на следующий ход."}
                 case "key_error":
-                    enemy.intent = {"label": "Missing Key", "details": "Consumes a shield first, else 4 damage."}
+                    enemy.intent = {"label": "Потерянный ключ", "details": "Сначала сжигает щит, иначе наносит 4 урона."}
                 case "recursion_error":
-                    enemy.intent = {"label": "Infinite Stack", "details": f"{2 + session.turn_number} scaling damage."}
+                    enemy.intent = {"label": "Бесконечный стек", "details": f"{2 + session.turn_number} урона с ростом от хода."}
                 case "import_error":
-                    enemy.intent = {"label": "Dependency Crash", "details": "3 damage and async cards cost +1 CPU."}
+                    enemy.intent = {"label": "Сбой зависимости", "details": "3 урона и async-карты стоят на 1 CPU дороже."}
 
     def _check_battle_end(self, session: GameSessionModel) -> None:
         if session.player_state.current_errors <= 0:
             session.phase = SessionPhase.GAME_OVER.value
             session.status = "defeat"
-            self._log(session, "The interpreter crashed.")
+            self._log(session, "Интерпретатор рухнул.")
             return
         if not self._living_enemies(session) and session.phase == SessionPhase.BATTLE.value:
             session.phase = SessionPhase.REWARD.value
@@ -567,7 +567,7 @@ class GameEngine:
                 "upgrade_used": False,
                 "reward_options": reward_rng.sample(list(CARD_LIBRARY.keys()), k=3),
             }
-            self._log(session, "Battle cleared. Reward phase unlocked.")
+            self._log(session, "Бой завершен. Открыта фаза наград.")
 
     def _resolve_queued_actions(self, session: GameSessionModel, immediate: bool = False) -> None:
         queued = session.player_state.status_effects.get("queued_actions", [])
@@ -598,10 +598,10 @@ class GameEngine:
             player.status_effects["error_shield"] = shield - blocked
             amount -= blocked
             if blocked:
-                self._log(session, f"Shield blocked {blocked} damage.")
+                self._log(session, f"Щит заблокировал {blocked} урона.")
         if amount > 0:
             player.current_errors = max(0, player.current_errors - amount)
-            self._log(session, f"Took {amount} Error damage.")
+            self._log(session, f"Получено {amount} урона по Ошибкам.")
 
     def _heal_player(self, session: GameSessionModel, amount: int) -> None:
         player = session.player_state
@@ -612,7 +612,7 @@ class GameEngine:
             return
         effective_damage = amount + (1 if enemy.status_effects.get("weak", 0) and amount > 0 else 0)
         enemy.current_hp = max(0, enemy.current_hp - effective_damage)
-        self._log(session, f"{enemy.name} took {effective_damage} damage.")
+        self._log(session, f"{enemy.name} получает {effective_damage} урона.")
 
     def _sorted_cards(self, session: GameSessionModel, zone: str) -> list[CardStateModel]:
         return sorted([card for card in session.cards if card.zone == zone], key=lambda card: card.position)
@@ -635,7 +635,7 @@ class GameEngine:
                     return enemy
         if allow_fallback or len(living) == 1:
             return living[0]
-        raise ValueError("Select a target enemy.")
+        raise ValueError("Выберите цель среди врагов.")
 
     def _random_other_enemy(self, session: GameSessionModel, excluded_enemy_id: int | None) -> EnemyStateModel | None:
         options = [enemy for enemy in self._living_enemies(session) if enemy.id != excluded_enemy_id]
@@ -645,7 +645,7 @@ class GameEngine:
         candidates = [card for card in self._sorted_cards(session, CardZone.HAND.value) if CARD_LIBRARY[card.card_id].card_type.value == card_type]
         if candidates:
             candidates[0].disabled_until_turn = session.turn_number + 1
-            self._log(session, f"{CARD_LIBRARY[candidates[0].card_id].name} was disabled.")
+            self._log(session, f"Карта {CARD_LIBRARY[candidates[0].card_id].name} отключена.")
 
     def _add_type_tax(self, player: PlayerStateModel, card_type: str, cpu: int = 0, ram: int = 0) -> None:
         taxes = player.status_effects.get("type_tax", {})

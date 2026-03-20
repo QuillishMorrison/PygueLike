@@ -32,14 +32,41 @@ const elements = {
     passiveChoices: document.getElementById("passive-choices"),
 };
 
+const PHASE_LABELS = {
+    battle: "бой",
+    reward: "награда",
+    game_over: "поражение",
+    victory: "победа",
+};
+
+const STATUS_LABELS = {
+    active: "активно",
+    victory: "победа",
+    defeat: "поражение",
+};
+
+const CARD_TYPE_LABELS = {
+    control: "control",
+    data: "data",
+    async: "async",
+    "error-handling": "обработка ошибок",
+};
+
+const LEVEL_LABELS = {
+    web_app: "web_app",
+    data_pipeline: "data_pipeline",
+    api_service: "api_service",
+    game_server: "game_server",
+};
+
 async function request(path, options = {}) {
     const response = await fetch(`${API_BASE}${path}`, {
         headers: { "Content-Type": "application/json" },
         ...options,
     });
     if (!response.ok) {
-        const error = await response.json().catch(() => ({ detail: "Request failed." }));
-        throw new Error(error.detail || "Request failed.");
+        const error = await response.json().catch(() => ({ detail: "Ошибка запроса." }));
+        throw new Error(error.detail || "Ошибка запроса.");
     }
     return response.json();
 }
@@ -116,15 +143,15 @@ function connectSocket() {
     }
     const socket = new WebSocket(`${WS_BASE}/game/ws?session_id=${state.sessionId}`);
     state.socket = socket;
-    elements.connectionStatus.textContent = "connecting";
+    elements.connectionStatus.textContent = "подключение";
     socket.addEventListener("open", () => {
-        elements.connectionStatus.textContent = "live";
+        elements.connectionStatus.textContent = "онлайн";
     });
     socket.addEventListener("message", (event) => {
         setGameState(JSON.parse(event.data));
     });
     socket.addEventListener("close", () => {
-        elements.connectionStatus.textContent = "offline";
+        elements.connectionStatus.textContent = "не в сети";
     });
 }
 
@@ -145,27 +172,27 @@ function render() {
     elements.ram.textContent = `${game.player.ram} / ${game.player.max_ram}`;
     elements.errors.textContent = `${game.player.errors} / ${game.player.max_errors}`;
     elements.shield.textContent = `${game.player.error_shield}`;
-    elements.runMeta.textContent = `Turn ${game.turn_number} | ${game.phase} | ${game.status}`;
+    elements.runMeta.textContent = `Ход ${game.turn_number} | ${translatePhase(game.phase)} | ${translateStatus(game.status)}`;
     const modifierCopy = game.level.modifiers.map((modifier) => `${modifier.name}: ${modifier.description}`).join(" | ");
-    elements.levelMeta.textContent = `${game.level.level_type} | ${modifierCopy}`;
-    elements.pileMeta.textContent = `Draw ${game.draw_pile} / Discard ${game.discard_pile} / Exhaust ${game.exhaust_pile}`;
+    elements.levelMeta.textContent = `${translateLevel(game.level.level_type)} | ${modifierCopy}`;
+    elements.pileMeta.textContent = `Добор ${game.draw_pile} / Сброс ${game.discard_pile} / Изгнание ${game.exhaust_pile}`;
     elements.endTurnBtn.disabled = game.phase !== "battle";
 
     elements.battleLog.innerHTML = game.log.map((entry) => `<div class="log-entry">${escapeHtml(entry)}</div>`).join("");
     elements.passives.innerHTML = game.player.passives.length
         ? game.player.passives.map((passive) => `<span class="pill">${escapeHtml(passive.name)}</span>`).join("")
-        : `<span class="meta-copy">No passives installed yet.</span>`;
+        : `<span class="meta-copy">Пассивки еще не выбраны.</span>`;
 
     elements.enemies.innerHTML = game.enemies.length
         ? game.enemies.map(renderEnemy).join("")
-        : `<div class="meta-copy">No enemies remain.</div>`;
+        : `<div class="meta-copy">Врагов не осталось.</div>`;
     elements.hand.innerHTML = game.hand.length
         ? game.hand.map((card) => renderCard(card, "play")).join("")
-        : `<div class="meta-copy">Hand is empty.</div>`;
+        : `<div class="meta-copy">Рука пуста.</div>`;
     elements.rewardSection.innerHTML = renderRewardSection(game);
     elements.deckCards.innerHTML = game.deck_cards.length
         ? game.deck_cards.map((card) => renderCard(card, "deck")).join("")
-        : `<div class="meta-copy">Deck is empty.</div>`;
+        : `<div class="meta-copy">Колода пуста.</div>`;
 
     attachHandlers();
     renderPassives();
@@ -188,11 +215,11 @@ function renderCard(card, mode) {
     const disabled = card.disabled || (mode === "play" && state.game.phase !== "battle");
     const tags = card.synergy_tags.map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join("");
     const actions = mode === "play"
-        ? `<button data-play-card="${card.instance_id}" ${disabled ? "disabled" : ""}>Play</button>`
+        ? `<button data-play-card="${card.instance_id}" ${disabled ? "disabled" : ""}>Сыграть</button>`
         : `
             <div class="inline-actions">
-                <button class="danger" data-remove-card="${card.instance_id}" ${!state.game.reward_state.can_remove_card || state.game.phase !== "reward" ? "disabled" : ""}>Remove</button>
-                <button data-upgrade-card="${card.instance_id}" ${!state.game.reward_state.can_upgrade_card || state.game.phase !== "reward" ? "disabled" : ""}>Upgrade</button>
+                <button class="danger" data-remove-card="${card.instance_id}" ${!state.game.reward_state.can_remove_card || state.game.phase !== "reward" ? "disabled" : ""}>Удалить</button>
+                <button data-upgrade-card="${card.instance_id}" ${!state.game.reward_state.can_upgrade_card || state.game.phase !== "reward" ? "disabled" : ""}>Улучшить</button>
             </div>
         `;
     return `
@@ -200,7 +227,7 @@ function renderCard(card, mode) {
             <div>
                 <h3>${escapeHtml(card.name)} ${card.upgraded ? "+" : ""}</h3>
                 <div class="card-meta">
-                    <span>${escapeHtml(card.card_type)}</span>
+                    <span>${escapeHtml(translateCardType(card.card_type))}</span>
                     <span>CPU ${card.cpu_cost}</span>
                     <span>RAM ${card.ram_cost}</span>
                 </div>
@@ -215,21 +242,21 @@ function renderCard(card, mode) {
 
 function renderRewardSection(game) {
     if (game.phase !== "reward") {
-        return `<div class="meta-copy">Rewards unlock after you clear the battle.</div>`;
+        return `<div class="meta-copy">Награды откроются после победы в бою.</div>`;
     }
     return game.reward_state.reward_options.map((card) => `
         <article class="code-card">
             <div>
                 <h3>${escapeHtml(card.name)}</h3>
                 <div class="card-meta">
-                    <span>${escapeHtml(card.card_type)}</span>
+                    <span>${escapeHtml(translateCardType(card.card_type))}</span>
                     <span>CPU ${card.cpu_cost}</span>
                     <span>RAM ${card.ram_cost}</span>
                 </div>
             </div>
             <pre>${escapeHtml(card.snippet)}</pre>
             <p class="meta-copy">${escapeHtml(card.description)}</p>
-            <button data-reward-card="${card.card_id}" ${!game.reward_state.can_choose_card ? "disabled" : ""}>Add To Deck</button>
+            <button data-reward-card="${card.card_id}" ${!game.reward_state.can_choose_card ? "disabled" : ""}>Добавить в колоду</button>
         </article>
     `).join("");
 }
@@ -309,6 +336,22 @@ function escapeHtml(value) {
         .replaceAll("'", "&#39;");
 }
 
+function translatePhase(phase) {
+    return PHASE_LABELS[phase] || phase;
+}
+
+function translateStatus(status) {
+    return STATUS_LABELS[status] || status;
+}
+
+function translateCardType(cardType) {
+    return CARD_TYPE_LABELS[cardType] || cardType;
+}
+
+function translateLevel(levelType) {
+    return LEVEL_LABELS[levelType] || levelType;
+}
+
 elements.startBtn.addEventListener("click", async () => {
     try {
         await startGame();
@@ -326,5 +369,5 @@ elements.endTurnBtn.addEventListener("click", async () => {
 });
 
 fetchPassives().catch(() => {
-    elements.connectionStatus.textContent = "backend unavailable";
+    elements.connectionStatus.textContent = "backend недоступен";
 });
